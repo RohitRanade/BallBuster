@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoopDash - Multi-Layer Runner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: radial-gradient(circle at center, #1a0033, #0d001a, #000);
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            color: white;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #gameCanvas {
+            border-radius: 20px;
+            cursor: pointer;
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.3);
+        }
+
+        #score {
+            position: absolute;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 4em;
+            font-weight: 300;
+            letter-spacing: 0.2em;
+            color: white;
+            text-shadow: 0 0 30px rgba(255, 255, 255, 0.8);
+            z-index: 100;
+        }
+
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 50px;
+            border-radius: 20px;
+            border: 2px solid #ff0080;
+            box-shadow: 0 0 50px rgba(255, 0, 128, 0.5);
+            display: none;
+            z-index: 200;
+        }
+
+        #gameOver h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            color: #ff0080;
+            text-shadow: 0 0 20px #ff0080;
+        }
+
+        #gameOver p {
+            font-size: 1.5em;
+            margin-bottom: 30px;
+            color: #00ffff;
+        }
+
+        #restartBtn {
+            font-size: 1.3em;
+            padding: 15px 40px;
+            background: linear-gradient(45deg, #ff0080, #00ffff);
+            border: none;
+            border-radius: 25px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #restartBtn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.8);
+        }
+
+        #instructions {
+            position: absolute;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            font-size: 1.1em;
+            opacity: 0.7;
+            z-index: 100;
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+
+        .lives {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            z-index: 100;
+        }
+
+        .life {
+            width: 8px;
+            height: 30px;
+            background: linear-gradient(to top, #ff8800, #ffaa00);
+            border-radius: 4px;
+            box-shadow: 0 0 15px rgba(255, 136, 0, 0.8);
+        }
+
+        #debug {
+            position: absolute;
+            top: 120px;
+            left: 20px;
+            color: white;
+            font-size: 12px;
+            z-index: 100;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="800"></canvas>
+        <div id="score">000</div>
+        <div class="lives">
+            <div class="life"></div>
+            <div class="life"></div>
+            <div class="life"></div>
+        </div>
+        <div id="instructions" class="pulse">← LEFT ARROW | RIGHT ARROW →</div>
+        <div id="debug">
+            Obstacles: <span id="obstacleCount">0</span><br>
+            Speed: <span id="speedDisplay">0</span><br>
+            Spawn Rate: <span id="spawnRateDisplay">0</span>
+        </div>
+        <div id="gameOver">
+            <h1>GAME OVER</h1>
+            <p>Score: <span id="finalScore">000</span></p>
+            <button id="restartBtn">Restart</button>
+        </div>
+    </div>
+
+    <script>
+        class LoopDashGame {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.centerX = this.canvas.width / 2;
+                this.centerY = this.canvas.height / 2;
+                
+                // Initialize audio context
+                this.initAudio();
+                
+                // Game state
+                this.gameState = 'playing'; // 'playing', 'gameOver'
+                this.score = 0;
+                this.lives = 3;
+                
+                // Player
+                this.player = {
+                    angle: 0,
+                    currentLane: 1, // 0 = inner, 1 = middle, 2 = outer
+                    targetLane: 1,
+                    laneTransition: 0,
+                    size: 12
+                };
+                
+                // Lanes
+                this.lanes = [
+                    { radius: 120, color: '#00ffff' },
+                    { radius: 180, color: '#00ffff' },
+                    { radius: 240, color: '#00ffff' }
+                ];
+                
+                // Game mechanics
+                this.speed = 0.015;
+                this.baseSpeed = 0.015;
+                this.maxSpeed = 0.045;
+                this.obstacles = [];
+                this.powerUps = [];
+                this.particles = [];
+                this.obstacleSpawnRate = 0.012;
+                this.lastObstacleAngle = -Math.PI;
+                this.minObstacleDistance = Math.PI / 2.5;
+                this.spawnDistance = Math.PI * 1.4;
+                this.removeDistance = -Math.PI * 1.2;
+                
+                this.init();
+            }
+            
+            initAudio() {
+                // Create audio context for sound effects
+                this.audioContext = null;
+                
+                // Initialize audio context on first user interaction
+                const initAudioContext = () => {
+                    if (!this.audioContext) {
+                        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    if (this.audioContext.state === 'suspended') {
+                        this.audioContext.resume();
+                    }
+                };
+                
+                // Add event listeners to initialize audio on first interaction
+                document.addEventListener('click', initAudioContext, { once: true });
+                document.addEventListener('keydown', initAudioContext, { once: true });
+                document.addEventListener('touchstart', initAudioContext, { once: true });
+            }
+            
+            playLaneSwitchSound() {
+                if (!this.audioContext) return;
+                
+                try {
+                    // Create oscillator for the switch sound
+                    const oscillator = this.audioContext.createOscillator();
+                    const gainNode = this.audioContext.createGain();
+                    
+                    // Connect audio nodes
+                    oscillator.connect(gainNode);
+                    gainNode.connect(this.audioContext.destination);
+                    
+                    // Configure the sound - a quick rising tone
+                    oscillator.frequency.setValueAtTime(400, this.audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(800, this.audioContext.currentTime + 0.1);
+                    
+                    // Configure volume envelope - quick fade out
+                    gainNode.gain.setValueAtTime(0.3, this.audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.15);
+                    
+                    // Play the sound
+                    oscillator.start(this.audioContext.currentTime);
+                    oscillator.stop(this.audioContext.currentTime + 0.15);
+                } catch (error) {
+                    console.log('Audio playback failed:', error);
+                }
+            }
+            
+            playCollisionSound() {
+                if (!this.audioContext) return;
+                
+                try {
+                    // Create a harsh collision sound
+                    const oscillator = this.audioContext.createOscillator();
+                    const gainNode = this.audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(this.audioContext.destination);
+                    
+                    // Low frequency harsh sound
+                    oscillator.frequency.setValueAtTime(150, this.audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(50, this.audioContext.currentTime + 0.3);
+                    oscillator.type = 'sawtooth';
+                    
+                    gainNode.gain.setValueAtTime(0.5, this.audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.3);
+                    
+                    oscillator.start(this.audioContext.currentTime);
+                    oscillator.stop(this.audioContext.currentTime + 0.3);
+                } catch (error) {
+                    console.log('Audio playback failed:', error);
+                }
+            }
+            
+            init() {
+                this.setupEventListeners();
+                this.spawnInitialObstacles();
+                this.gameLoop();
+            }
+            
+            setupEventListeners() {
+                // Touch and click events (for mobile)
+                this.canvas.addEventListener('click', (e) => {
+                    const rect = this.canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    if (x < this.canvas.width / 2) {
+                        this.switchLane('left');
+                    } else {
+                        this.switchLane('right');
+                    }
+                });
+                this.canvas.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    const rect = this.canvas.getBoundingClientRect();
+                    const touch = e.touches[0];
+                    const x = touch.clientX - rect.left;
+                    if (x < this.canvas.width / 2) {
+                        this.switchLane('left');
+                    } else {
+                        this.switchLane('right');
+                    }
+                });
+                
+                // Keyboard controls
+                document.addEventListener('keydown', (e) => {
+                    if (e.code === 'ArrowLeft') {
+                        e.preventDefault();
+                        this.switchLane('left');
+                    } else if (e.code === 'ArrowRight') {
+                        e.preventDefault();
+                        this.switchLane('right');
+                    } else if (e.code === 'Space') {
+                        e.preventDefault();
+                        this.switchLane('right');
+                    }
+                });
+                
+                // Restart button
+                document.getElementById('restartBtn').addEventListener('click', () => this.restart());
+            }
+            
+            switchLane(direction = 'right') {
+                if (this.gameState !== 'playing') return;
+                
+                const oldLane = this.player.targetLane;
+                
+                if (direction === 'left') {
+                    this.player.targetLane = Math.max(0, this.player.targetLane - 1);
+                } else {
+                    this.player.targetLane = Math.min(2, this.player.targetLane + 1);
+                }
+                
+                // Play sound only if lane actually changed
+                if (this.player.targetLane !== oldLane) {
+                    this.playLaneSwitchSound();
+                    this.createSwitchEffect();
+                }
+            }
+            
+            createSwitchEffect() {
+                // Create particles when switching lanes
+                for (let i = 0; i < 8; i++) {
+                    this.particles.push({
+                        x: this.centerX + Math.cos(this.player.angle) * this.getCurrentRadius(),
+                        y: this.centerY + Math.sin(this.player.angle) * this.getCurrentRadius(),
+                        vx: (Math.random() - 0.5) * 4,
+                        vy: (Math.random() - 0.5) * 4,
+                        life: 30,
+                        maxLife: 30,
+                        color: '#00ffff'
+                    });
+                }
+            }
+            
+            getCurrentRadius() {
+                const current = this.lanes[this.player.currentLane].radius;
+                const target = this.lanes[this.player.targetLane].radius;
+                return current + (target - current) * this.player.laneTransition;
+            }
+            
+            spawnInitialObstacles() {
+                // Spawn fewer initial obstacles with better spacing
+                for (let i = 0; i < 3; i++) {
+                    const angle = this.player.angle + (i * Math.PI / 1.5) + Math.PI;
+                    const lane = Math.floor(Math.random() * 3);
+                    
+                    this.obstacles.push({
+                        angle: angle,
+                        lane: lane,
+                        size: 15,
+                        type: Math.random() > 0.8 ? 'arrow' : 'diamond',
+                        rotation: 0,
+                        pulse: 0,
+                        spawnTime: Date.now()
+                    });
+                }
+                
+                this.lastObstacleAngle = this.obstacles[this.obstacles.length - 1].angle;
+            }
+            
+            spawnObstacle() {
+                // Calculate spawn angle ahead of player
+                const spawnAngle = this.player.angle + this.spawnDistance;
+                
+                // Check if enough distance from last obstacle
+                let angleDiff = spawnAngle - this.lastObstacleAngle;
+                
+                // Normalize angle difference to [0, 2π)
+                while (angleDiff < 0) angleDiff += Math.PI * 2;
+                while (angleDiff >= Math.PI * 2) angleDiff -= Math.PI * 2;
+                
+                // Only check minimum distance if we have spawned obstacles recently
+                if (this.obstacles.length > 0 && angleDiff < this.minObstacleDistance) {
+                    return; // Too close to last obstacle
+                }
+                
+                const lane = Math.floor(Math.random() * 3);
+                
+                this.obstacles.push({
+                    angle: spawnAngle,
+                    lane: lane,
+                    size: 15,
+                    type: Math.random() > 0.8 ? 'arrow' : 'diamond',
+                    rotation: 0,
+                    pulse: 0,
+                    spawnTime: Date.now()
+                });
+                
+                this.lastObstacleAngle = spawnAngle;
+            }
+            
+            update() {
+                if (this.gameState !== 'playing') return;
+                
+                // Update player
+                this.player.angle += this.speed;
+                
+                // Handle lane transition
+                if (this.player.currentLane !== this.player.targetLane) {
+                    this.player.laneTransition += 0.08;
+                    if (this.player.laneTransition >= 1) {
+                        this.player.laneTransition = 0;
+                        this.player.currentLane = this.player.targetLane;
+                    }
+                }
+                
+                // Update obstacles - Fixed the iteration issue
+                for (let i = this.obstacles.length - 1; i >= 0; i--) {
+                    const obstacle = this.obstacles[i];
+                    obstacle.rotation += 0.05;
+                    obstacle.pulse += 0.1;
+                    
+                    // Calculate relative angle to player
+                    let angleDiff = obstacle.angle - this.player.angle;
+                    
+                    // Normalize angle difference to [-π, π]
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    
+                    // Remove obstacles that are far behind the player
+                    if (angleDiff < this.removeDistance) {
+                        this.obstacles.splice(i, 1);
+                    }
+                }
+                
+                // Spawn new obstacles more consistently
+                if (Math.random() < this.obstacleSpawnRate) {
+                    this.spawnObstacle();
+                }
+                
+                // Additional spawn check - ensure minimum obstacle density
+                if (this.obstacles.length < 3) {
+                    this.spawnObstacle();
+                }
+                
+                // Update particles - Fixed the iteration issue
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const particle = this.particles[i];
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+                    particle.life--;
+                    particle.vx *= 0.98;
+                    particle.vy *= 0.98;
+                    
+                    if (particle.life <= 0) {
+                        this.particles.splice(i, 1);
+                    }
+                }
+                
+                // Check collisions
+                this.checkCollisions();
+                
+                // Update score (no difficulty increase)
+                this.score += 1;
+                this.updateScoreDisplay();
+                this.updateDebugDisplay();
+                
+                // Keep all game parameters constant - no difficulty progression
+            }
+            
+            checkCollisions() {
+                const playerRadius = this.getCurrentRadius();
+                const playerX = this.centerX + Math.cos(this.player.angle) * playerRadius;
+                const playerY = this.centerY + Math.sin(this.player.angle) * playerRadius;
+                
+                // Fixed collision detection - iterate backwards to avoid index issues
+                for (let i = this.obstacles.length - 1; i >= 0; i--) {
+                    const obstacle = this.obstacles[i];
+                    const obstacleRadius = this.lanes[obstacle.lane].radius;
+                    const obstacleX = this.centerX + Math.cos(obstacle.angle) * obstacleRadius;
+                    const obstacleY = this.centerY + Math.sin(obstacle.angle) * obstacleRadius;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(playerX - obstacleX, 2) + 
+                        Math.pow(playerY - obstacleY, 2)
+                    );
+                    
+                    if (distance < this.player.size + obstacle.size) {
+                        // Collision detected
+                        this.handleCollision();
+                        this.obstacles.splice(i, 1);
+                        this.createExplosion(obstacleX, obstacleY);
+                        break; // Only handle one collision per frame
+                    }
+                }
+            }
+            
+            handleCollision() {
+                this.lives--;
+                this.playCollisionSound();
+                this.updateLivesDisplay();
+                
+                if (this.lives <= 0) {
+                    this.gameOver();
+                } else {
+                    // Brief invincibility flash
+                    this.canvas.style.filter = 'brightness(2) hue-rotate(90deg)';
+                    setTimeout(() => {
+                        this.canvas.style.filter = 'none';
+                    }, 200);
+                }
+            }
+            
+            createExplosion(x, y) {
+                for (let i = 0; i < 15; i++) {
+                    this.particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: (Math.random() - 0.5) * 8,
+                        life: 40,
+                        maxLife: 40,
+                        color: '#ff0080'
+                    });
+                }
+            }
+            
+            draw() {
+                // Clear canvas with fade effect
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw background glow
+                this.drawBackgroundGlow();
+                
+                // Draw lanes
+                this.drawLanes();
+                
+                // Draw obstacles
+                this.drawObstacles();
+                
+                // Draw particles
+                this.drawParticles();
+                
+                // Draw player
+                this.drawPlayer();
+            }
+            
+            drawBackgroundGlow() {
+                const gradient = this.ctx.createRadialGradient(
+                    this.centerX, this.centerY, 0,
+                    this.centerX, this.centerY, 300
+                );
+                gradient.addColorStop(0, 'rgba(0, 255, 255, 0.1)');
+                gradient.addColorStop(0.5, 'rgba(255, 0, 128, 0.05)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            }
+            
+            drawLanes() {
+                this.lanes.forEach((lane, index) => {
+                    // Main lane circle
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.centerX, this.centerY, lane.radius, 0, Math.PI * 2);
+                    this.ctx.strokeStyle = lane.color;
+                    this.ctx.lineWidth = 3;
+                    this.ctx.shadowColor = lane.color;
+                    this.ctx.shadowBlur = 15;
+                    this.ctx.stroke();
+                    this.ctx.shadowBlur = 0;
+                });
+            }
+            
+            drawObstacles() {
+                this.obstacles.forEach(obstacle => {
+                    const radius = this.lanes[obstacle.lane].radius;
+                    const x = this.centerX + Math.cos(obstacle.angle) * radius;
+                    const y = this.centerY + Math.sin(obstacle.angle) * radius;
+                    
+                    this.ctx.save();
+                    this.ctx.translate(x, y);
+                    this.ctx.rotate(obstacle.rotation);
+                    
+                    // Pulsing glow effect
+                    const glowSize = obstacle.size + Math.sin(obstacle.pulse) * 3;
+                    this.ctx.shadowColor = '#ff0080';
+                    this.ctx.shadowBlur = 20;
+                    
+                    if (obstacle.type === 'diamond') {
+                        this.drawDiamond(0, 0, glowSize);
+                    } else {
+                        this.drawArrow(0, 0, glowSize);
+                    }
+                    
+                    this.ctx.restore();
+                });
+            }
+            
+            drawDiamond(x, y, size) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(x, y - size);
+                this.ctx.lineTo(x + size, y);
+                this.ctx.lineTo(x, y + size);
+                this.ctx.lineTo(x - size, y);
+                this.ctx.closePath();
+                this.ctx.fillStyle = '#ff0080';
+                this.ctx.fill();
+                this.ctx.strokeStyle = '#ff66aa';
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+            }
+            
+            drawArrow(x, y, size) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(x - size, y - size/2);
+                this.ctx.lineTo(x, y - size);
+                this.ctx.lineTo(x + size, y - size/2);
+                this.ctx.lineTo(x + size/2, y);
+                this.ctx.lineTo(x + size, y + size/2);
+                this.ctx.lineTo(x, y + size);
+                this.ctx.lineTo(x - size, y + size/2);
+                this.ctx.lineTo(x - size/2, y);
+                this.ctx.closePath();
+                this.ctx.fillStyle = '#ff6600';
+                this.ctx.fill();
+                this.ctx.strokeStyle = '#ffaa00';
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+            }
+            
+            drawPlayer() {
+                const radius = this.getCurrentRadius();
+                const x = this.centerX + Math.cos(this.player.angle) * radius;
+                const y = this.centerY + Math.sin(this.player.angle) * radius;
+                
+                // Player glow
+                this.ctx.beginPath();
+                this.ctx.arc(x, y, this.player.size + 5, 0, Math.PI * 2);
+                this.ctx.fillStyle = 'rgba(0, 255, 255, 0.3)';
+                this.ctx.fill();
+                
+                // Player core
+                this.ctx.beginPath();
+                this.ctx.arc(x, y, this.player.size, 0, Math.PI * 2);
+                this.ctx.fillStyle = '#00ffff';
+                this.ctx.shadowColor = '#00ffff';
+                this.ctx.shadowBlur = 20;
+                this.ctx.fill();
+                this.ctx.shadowBlur = 0;
+                
+                // Player inner glow
+                this.ctx.beginPath();
+                this.ctx.arc(x, y, this.player.size - 4, 0, Math.PI * 2);
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fill();
+            }
+            
+            drawParticles() {
+                this.particles.forEach(particle => {
+                    const alpha = particle.life / particle.maxLife;
+                    this.ctx.beginPath();
+                    this.ctx.arc(particle.x, particle.y, 2, 0, Math.PI * 2);
+                    this.ctx.fillStyle = particle.color + Math.floor(alpha * 255).toString(16).padStart(2, '0');
+                    this.ctx.fill();
+                });
+            }
+            
+            updateScoreDisplay() {
+                document.getElementById('score').textContent = 
+                    this.score.toString().padStart(3, '0');
+            }
+            
+            updateDebugDisplay() {
+                document.getElementById('obstacleCount').textContent = this.obstacles.length;
+                document.getElementById('speedDisplay').textContent = this.speed.toFixed(3);
+                document.getElementById('spawnRateDisplay').textContent = this.obstacleSpawnRate.toFixed(3);
+            }
+            
+            updateLivesDisplay() {
+                const lives = document.querySelectorAll('.life');
+                lives.forEach((life, index) => {
+                    life.style.opacity = index < this.lives ? '1' : '0.2';
+                });
+            }
+            
+            gameOver() {
+                this.gameState = 'gameOver';
+                document.getElementById('finalScore').textContent = 
+                    this.score.toString().padStart(3, '0');
+                document.getElementById('gameOver').style.display = 'block';
+                document.getElementById('instructions').style.display = 'none';
+            }
+            
+            restart() {
+                this.gameState = 'playing';
+                this.score = 0;
+                this.lives = 3;
+                this.speed = this.baseSpeed;
+                this.obstacleSpawnRate = 0.012;
+                this.minObstacleDistance = Math.PI / 2.5;
+                this.lastObstacleAngle = -Math.PI;
+                this.player = {
+                    angle: 0,
+                    currentLane: 1,
+                    targetLane: 1,
+                    laneTransition: 0,
+                    size: 12
+                };
+                this.obstacles = [];
+                this.particles = [];
+                
+                this.spawnInitialObstacles();
+                this.updateScoreDisplay();
+                this.updateLivesDisplay();
+                
+                document.getElementById('gameOver').style.display = 'none';
+                document.getElementById('instructions').style.display = 'block';
+            }
+            
+            gameLoop() {
+                this.update();
+                this.draw();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+        
+        // Start the game
+        const game = new LoopDashGame();
+    </script>
+</body>
+</html>
